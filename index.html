@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lycées perturbés – suivi collaboratif</title>
+
+<style>
+/* ===================================================================
+   BLOC CSS 1 : les "variables" de design
+   On définit les couleurs une seule fois ici. Pour changer l'allure
+   du site, tu modifies ces lignes et tout le reste suit.
+   =================================================================== */
+:root {
+  --fond: #f3f5f7;
+  --carte: #ffffff;
+  --encre: #17212b;
+  --discret: #5d6b78;
+  --trait: #d5dbe1;
+  --alerte: #d4380d;      /* lycée perturbé */
+  --alerte-clair: #fde9e2;
+  --ok: #237a4b;          /* lycée débloqué */
+  --accent: #1d4ed8;      /* boutons */
+}
+
+/* BLOC CSS 2 : réglages de base. box-sizing évite les surprises de taille. */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--fond);
+  color: var(--encre);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header { padding: 1.5rem 1.25rem 0; max-width: 1100px; margin: 0 auto; }
+h1 { margin: 0; font-size: 1.6rem; letter-spacing: -0.02em; }
+header p { margin: .25rem 0 0; color: var(--discret); max-width: 60ch; }
+
+/* BLOC CSS 3 : la mise en page à deux colonnes (CSS Grid).
+   "1fr 1fr" = deux colonnes de même largeur.
+   Sous 800px de large (téléphone), on passe à une seule colonne. */
+main {
+  max-width: 1100px; margin: 1rem auto 2rem; padding: 0 1.25rem;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem;
+}
+@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+
+.carte {
+  background: var(--carte); border: 1px solid var(--trait);
+  border-radius: 10px; padding: 1.1rem;
+}
+h2 { margin: 0 0 .75rem; font-size: 1.1rem; }
+
+/* BLOC CSS 4 : la liste des lycées perturbés (colonne gauche) */
+#liste { list-style: none; margin: 0; padding: 0; }
+#liste li {
+  border-left: 4px solid var(--alerte); background: var(--alerte-clair);
+  padding: .55rem .75rem; margin-bottom: .5rem; border-radius: 0 6px 6px 0;
+}
+#liste .nom { font-weight: 600; }
+#liste .meta { font-size: .85rem; color: var(--discret); }
+.vide { color: var(--discret); font-style: italic; }
+
+/* BLOC CSS 5 : le champ de recherche et ses suggestions.
+   Le conteneur est en position: relative pour que la liste de
+   suggestions (position: absolute) se colle juste en dessous. */
+.recherche { position: relative; }
+input[type=text], select {
+  width: 100%; padding: .65rem .75rem; font: inherit;
+  border: 1px solid var(--trait); border-radius: 6px; background: #fff;
+}
+input:focus, select:focus, button:focus-visible {
+  outline: 3px solid #93b4ff; outline-offset: 1px;
+}
+#suggestions {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 5;
+  background: #fff; border: 1px solid var(--trait); border-radius: 6px;
+  margin: 2px 0 0; padding: 0; list-style: none; max-height: 240px; overflow-y: auto;
+}
+#suggestions li { padding: .5rem .75rem; cursor: pointer; }
+#suggestions li small { color: var(--discret); }
+#suggestions li.actif, #suggestions li:hover { background: #e8efff; }
+
+/* BLOC CSS 6 : le volet d'action. L'attribut HTML "hidden" le cache ;
+   le JavaScript le retire quand un lycée est choisi. */
+#volet { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--trait); }
+#volet[hidden] { display: none; }
+label { display: block; font-weight: 600; margin: .6rem 0 .25rem; }
+button {
+  margin-top: 1rem; padding: .65rem 1.2rem; font: inherit; font-weight: 600;
+  color: #fff; background: var(--accent); border: 0; border-radius: 6px; cursor: pointer;
+}
+#message { margin-top: .75rem; min-height: 1.4em; color: var(--ok); font-weight: 600; }
+
+/* BLOC CSS 7 : le petit graphique par heure (de simples <div> dont
+   la hauteur est calculée par le JavaScript). */
+#histo { display: flex; align-items: flex-end; gap: 4px; height: 90px; margin-top: .5rem; }
+#histo div { flex: 1; background: var(--alerte); border-radius: 3px 3px 0 0; min-height: 2px; }
+#histo-heures { display: flex; gap: 4px; font-size: .7rem; color: var(--discret); }
+#histo-heures span { flex: 1; text-align: center; }
+</style>
+<!-- Cloudflare Turnstile (anti-bot). render=explicit : on déclenche
+     l'affichage nous-mêmes, au moment où le volet d'action s'ouvre. -->
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+</head>
+
+<body>
+
+<!-- ===================================================================
+     BLOC HTML 1 : l'en-tête
+     =================================================================== -->
+<header>
+  <h1>Lycées perturbés</h1>
+  <p>Liste collaborative et non vérifiée : chaque visiteur peut signaler l'état de son lycée.</p>
+</header>
+
+<main>
+
+  <!-- BLOC HTML 2 : colonne GAUCHE, la liste des lycées perturbés.
+       Elle est vide au départ : le JavaScript la remplit. -->
+  <aside class="carte">
+    <h2>Actuellement perturbés (<span id="compteur">0</span>)</h2>
+    <ul id="liste"></ul>
+  </aside>
+
+  <!-- BLOC HTML 3 : colonne DROITE, signalement + statistiques -->
+  <section>
+
+    <div class="carte">
+      <h2>Signaler un lycée</h2>
+
+      <!-- Champ de recherche avec autocomplétion.
+           role/aria-* : aide les lecteurs d'écran à comprendre le composant. -->
+      <div class="recherche">
+        <input type="text" id="champ" placeholder="Nom du lycée ou ville…"
+               autocomplete="off" role="combobox" aria-expanded="false"
+               aria-controls="suggestions">
+        <ul id="suggestions" role="listbox" hidden></ul>
+      </div>
+
+      <!-- Volet d'action, caché tant qu'aucun lycée n'est choisi -->
+      <div id="volet" hidden>
+        <strong id="lycee-choisi"></strong>
+        <label for="motif">Que se passe-t-il ?</label>
+        <select id="motif"></select>   <!-- rempli depuis la liste MOTIFS -->
+        <div id="captcha" style="margin-top:.75rem"></div>   <!-- widget anti-bot -->
+        <button id="valider" type="button">Valider</button>
+        <div id="message" role="status"></div>
+      </div>
+    </div>
+
+    <div class="carte" style="margin-top:1.25rem">
+      <h2>Lycées perturbés, heure par heure</h2>
+      <div id="histo"></div>
+      <div id="histo-heures"></div>
+    </div>
+
+  </section>
+  <footer style="grid-column:1/-1;text-align:center;font-size:.85rem">
+    <a href="admin.html" style="color:#8a96a3">Administration</a>
+  </footer>
+  <footer style="grid-column:1/-1;text-align:center;font-size:.85rem">
+    <a href="confidentialite.html" style="color:#8a96a3">Confidentialité</a>
+    <span style="color:#8a96a3"> · </span>
+    <a href="admin.html" style="color:#8a96a3">Administration</a>
+  </footer>
+</main>
+
+<script>
+/* ===================================================================
+   BLOC JS 0 : CONNEXION À SUPABASE
+   L'URL et la clé "publishable" sont publiques : elles peuvent figurer
+   dans le code. Ce sont les règles d'accès (schema.sql) qui protègent
+   les données, pas le secret de ces valeurs.
+   =================================================================== */
+const SUPABASE_URL = "https://tmantitdvmctbxbvzlbf.supabase.co";
+const SUPABASE_CLE = "sb_publishable_nXZelcAhkvD63yTFmdbzOA_ekhnnpEH";
+// Clé de SITE Turnstile (publique). La clé secrète, elle, reste dans Supabase.
+const TURNSTILE_CLE_SITE = "0x4AAAAAAF75nUOZOzPumPUl";
+
+// Petite fonction qui envoie une requête à la base et renvoie la réponse.
+// "chemin" désigne une table et des filtres, par exemple :
+//   "motifs?select=id,label"  -> lit les colonnes id et label de la table motifs
+async function api(chemin, options = {}) {
+  const reponse = await fetch(`${SUPABASE_URL}/rest/v1/${chemin}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_CLE,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  if (!reponse.ok) throw new Error(`Erreur ${reponse.status} : ${await reponse.text()}`);
+  const texte = await reponse.text();
+  return texte ? JSON.parse(texte) : null;
+}
+/* ===================================================================
+   BLOC JS 1 : LES DONNÉES DE CONFIGURATION
+   Ce sont les seules lignes que tu modifies pour personnaliser le site.
+   =================================================================== */
+
+// Les motifs sont chargés depuis la table "motifs" de la base : pour en
+// ajouter, tu ajoutes une ligne dans Supabase (Table Editor > motifs).
+let MOTIFS = [];
+
+async function chargerMotifs() {
+  MOTIFS = await api("motifs?select=id,label,perturbe,actif&order=id");
+}
+
+// La liste des lycées n'est plus écrite ici : elle est chargée depuis
+// le fichier lycees.json (5650 lycées issus de l'open data).
+let LYCEES = [];
+let INDEX = new Map();     // uai -> lycée, pour retrouver un lycée instantanément
+
+async function chargerLycees() {
+  try {
+    const reponse = await fetch("lycees.json");
+    if (!reponse.ok) throw new Error("HTTP " + reponse.status);
+    const donnees = await reponse.json();
+    // Pour chaque lycée on pré-calcule un texte "nettoyé" (sans accents,
+    // en minuscules) : la recherche sera ainsi rapide à chaque lettre tapée.
+    LYCEES = donnees.map((l) => ({ ...l, recherche: normaliser(`${l.nom} ${l.ville}`) }));
+    INDEX = new Map(LYCEES.map((l) => [l.uai, l]));
+  } catch (e) {
+    document.getElementById("liste").textContent =
+      "Impossible de charger lycees.json. Le site doit être lancé via un serveur local (voir les explications).";
+  }
+}
+
+/* ===================================================================
+   BLOC JS 2 : L'ÉTAT ACTUEL, CALCULÉ PAR LE SERVEUR
+   Les signalements bruts ne sont plus lisibles par le public. La base
+   applique elle-même les règles de fiabilité (seuil de 3 appareils
+   distincts, expiration à 24 h) et ne renvoie que :
+   - perturbes  : les lycées confirmés, avec le nombre de confirmations
+   - historique : le nombre de lycées perturbés heure par heure
+   (voir schema-etape5.sql). Un visiteur ne peut donc pas contourner
+   ces règles en modifiant le code de la page.
+   =================================================================== */
+let perturbes = [];     // [{ uai, motif, confirmations, dernier }]
+let historique = [];    // [{ heure, nb }]
+
+async function chargerEtat() {
+  const [liste, histo] = await Promise.all([
+    api("rpc/lycees_perturbes", { method: "POST", body: "{}" }),
+    api("rpc/historique_horaire", { method: "POST", body: JSON.stringify({ nb_heures: 12 }) }),
+  ]);
+  perturbes = liste;
+  historique = histo;
+}
+
+// Identifiant aléatoire propre à ce navigateur, envoyé avec chaque
+// signalement. PROVISOIRE : à l'étape 6 il sera remplacé par une
+// empreinte calculée côté serveur.
+function idAppareil() {
+  try {
+    let id = localStorage.getItem("appareil-id");
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem("appareil-id", id); }
+    return id;
+  } catch (e) { return null; }
+}
+
+/* CAPTCHA : le widget fournit un "jeton" à usage unique que le serveur
+   fait vérifier par Cloudflare. Un jeton expire après quelques minutes. */
+let widgetCaptcha = null;     // identifiant du widget une fois affiché
+let jetonCaptcha = null;      // jeton valide, ou null s'il manque / a expiré
+
+function afficherCaptcha() {
+  if (!window.turnstile || widgetCaptcha !== null) return;
+  widgetCaptcha = turnstile.render("#captcha", {
+    sitekey: TURNSTILE_CLE_SITE,
+    callback: (jeton) => { jetonCaptcha = jeton; },
+    "expired-callback": () => { jetonCaptcha = null; },
+    "error-callback": () => { jetonCaptcha = null; },
+  });
+}
+
+// Un jeton ne sert qu'une fois : après chaque envoi on en redemande un
+function reinitialiserCaptcha() {
+  jetonCaptcha = null;
+  if (widgetCaptcha !== null) turnstile.reset(widgetCaptcha);
+}
+
+/* ===================================================================
+   BLOC JS 3 : FONCTIONS UTILITAIRES
+   =================================================================== */
+
+// Retrouve un objet par son id (motif ou lycée)
+const motifParId = (id) => MOTIFS.find((m) => m.id === id);
+const lyceeParUai = (uai) => INDEX.get(uai);
+
+// Enlève les accents et met en minuscules, pour que "ecole" trouve "École"
+function normaliser(texte) {
+  return texte.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+// Affiche une durée lisible : "il y a 2 h", "il y a 40 min"
+function depuis(date) {
+  const min = Math.round((Date.now() - date) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return `il y a ${min} min`;
+  return `il y a ${Math.round(min / 60)} h`;
+}
+
+/* ===================================================================
+   BLOC JS 4 : AFFICHAGE DE LA LISTE (colonne gauche)
+   On construit les éléments avec textContent (et non innerHTML) :
+   c'est une protection de sécurité contre l'injection de code.
+   La liste vient du serveur : elle ne contient que les lycées
+   confirmés par assez d'appareils distincts.
+   =================================================================== */
+function afficherListe() {
+  const ul = document.getElementById("liste");
+  ul.textContent = "";
+
+  const visibles = perturbes.filter((p) => lyceeParUai(p.uai));
+  document.getElementById("compteur").textContent = visibles.length;
+
+  if (visibles.length === 0) {
+    const li = document.createElement("li");
+    li.className = "vide";
+    li.style.cssText = "border:0;background:none";
+    li.textContent = "Aucun lycée confirmé pour le moment.";
+    ul.appendChild(li);
+    return;
+  }
+
+  for (const p of visibles) {
+    const lycee = lyceeParUai(p.uai);
+    const li = document.createElement("li");
+
+    const nom = document.createElement("div");
+    nom.className = "nom";
+    nom.textContent = `${lycee.nom} (${lycee.ville})`;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent =
+      `${motifParId(p.motif)?.label ?? p.motif} · ${p.confirmations} confirmations · ` +
+      depuis(Date.parse(p.dernier));
+
+    li.append(nom, meta);
+    ul.appendChild(li);
+  }
+}
+
+/* ===================================================================
+   BLOC JS 5 : LE GRAPHIQUE HEURE PAR HEURE
+   Les valeurs viennent du serveur (fonction historique_horaire), qui
+   applique la même règle que la liste : le graphique est cohérent.
+   =================================================================== */
+function afficherHistogramme() {
+  const zone = document.getElementById("histo");
+  const heures = document.getElementById("histo-heures");
+  zone.textContent = ""; heures.textContent = "";
+
+  const max = Math.max(1, ...historique.map((v) => v.nb));   // évite division par 0
+  for (const v of historique) {
+    const barre = document.createElement("div");
+    barre.style.height = `${(v.nb / max) * 100}%`;
+    barre.title = `${v.nb} lycée(s) perturbé(s)`;
+    zone.appendChild(barre);
+
+    const etiquette = document.createElement("span");
+    etiquette.textContent = new Date(v.heure).getHours() + "h";
+    heures.appendChild(etiquette);
+  }
+}
+
+/* ===================================================================
+   BLOC JS 6 : LE MENU DES MOTIFS
+   Il est construit automatiquement depuis MOTIFS : c'est ce qui permet
+   d'ajouter un motif en ne touchant qu'une seule ligne de la config.
+   =================================================================== */
+function remplirMotifs() {
+  const select = document.getElementById("motif");
+  for (const m of MOTIFS.filter((m) => m.actif)) {
+    const option = document.createElement("option");
+    option.value = m.id;
+    option.textContent = m.label;
+    select.appendChild(option);
+  }
+}
+
+/* ===================================================================
+   BLOC JS 7 : L'AUTOCOMPLÉTION
+   À chaque lettre tapée :
+   1. on normalise le texte saisi
+   2. on garde les lycées dont le nom ou la ville le contiennent
+   3. on affiche les 8 premiers
+   Les flèches ↑ ↓ et Entrée fonctionnent aussi au clavier.
+   =================================================================== */
+const champ = document.getElementById("champ");
+const boite = document.getElementById("suggestions");
+let resultats = [];       // lycées actuellement suggérés
+let indexActif = -1;      // suggestion surlignée au clavier
+let lyceeChoisi = null;   // lycée finalement sélectionné
+
+function chercher(texte) {
+  const q = normaliser(texte.trim());
+  if (q.length < 2) return [];                       // on attend 2 lettres
+  return LYCEES.filter((l) => l.recherche.includes(q)).slice(0, 8);
+}
+
+function afficherSuggestions() {
+  boite.textContent = "";
+  resultats.forEach((l, i) => {
+    const li = document.createElement("li");
+    li.setAttribute("role", "option");
+    if (i === indexActif) li.className = "actif";
+    li.append(l.nom + " ");
+    const small = document.createElement("small");
+    small.textContent = `${l.ville} (${l.dept})`;
+    li.appendChild(small);
+    // mousedown (et non click) : se déclenche avant que le champ perde le focus
+    li.addEventListener("mousedown", () => choisir(l));
+    boite.appendChild(li);
+  });
+  boite.hidden = resultats.length === 0;
+  champ.setAttribute("aria-expanded", String(!boite.hidden));
+}
+
+function choisir(lycee) {
+  lyceeChoisi = lycee;
+  champ.value = `${lycee.nom} (${lycee.ville})`;
+  boite.hidden = true;
+  document.getElementById("lycee-choisi").textContent = lycee.nom + " – " + lycee.ville;
+  document.getElementById("volet").hidden = false;   // on ouvre le volet d'action
+  afficherCaptcha();
+  document.getElementById("message").textContent = "";
+}
+
+champ.addEventListener("input", () => {
+  lyceeChoisi = null;
+  document.getElementById("volet").hidden = true;    // on referme si on retape
+  resultats = chercher(champ.value);
+  indexActif = -1;
+  afficherSuggestions();
+});
+
+champ.addEventListener("keydown", (e) => {
+  if (resultats.length === 0) return;
+  if (e.key === "ArrowDown") { indexActif = (indexActif + 1) % resultats.length; e.preventDefault(); }
+  else if (e.key === "ArrowUp") { indexActif = (indexActif - 1 + resultats.length) % resultats.length; e.preventDefault(); }
+  else if (e.key === "Enter" && indexActif >= 0) { choisir(resultats[indexActif]); e.preventDefault(); return; }
+  else if (e.key === "Escape") { resultats = []; }
+  afficherSuggestions();
+});
+
+champ.addEventListener("blur", () => { boite.hidden = true; });
+
+/* ===================================================================
+   BLOC JS 8 : LE BOUTON VALIDER
+   On AJOUTE un événement au journal de la base (on ne modifie rien).
+   La base peut refuser l'envoi (limites, appareil invalide) : on
+   traduit alors son code d'erreur en message lisible.
+   =================================================================== */
+const MESSAGES_ERREUR = {
+  limite_atteinte: "Tu as déjà envoyé plusieurs signalements récemment. Réessaie dans une heure.",
+  appareil_invalide: "Ton navigateur bloque le stockage local : impossible d'envoyer un signalement.",
+  motif_invalide: "Ce motif n'est plus disponible. Recharge la page.",
+  captcha_invalide: "La vérification anti-robot a échoué. Réessaie dans quelques secondes.",
+  lycee_inconnu: "Ce lycée est introuvable. Recharge la page.",
+};
+
+document.getElementById("valider").addEventListener("click", async () => {
+  if (!lyceeChoisi) return;
+  const uai = lyceeChoisi.uai;
+  const motifId = document.getElementById("motif").value;
+  const bouton = document.getElementById("valider");
+  const message = document.getElementById("message");
+  if (!jetonCaptcha) {
+    message.style.color = "var(--alerte)";
+    message.textContent = "Vérification anti-robot en cours : patiente quelques secondes, puis réessaie.";
+    return;
+  }
+  bouton.disabled = true;                 // évite le double clic
+  try {
+    // L'envoi passe par la fonction "signaler" : elle fait vérifier le
+    // CAPTCHA par Cloudflare avant d'enregistrer quoi que ce soit.
+    const reponse = await fetch(`${SUPABASE_URL}/functions/v1/signaler`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_CLE, "Content-Type": "application/json" },
+      body: JSON.stringify({ uai, motif: motifId, appareil: idAppareil(), captcha: jetonCaptcha }),
+    });
+    const donnees = await reponse.json().catch(() => ({}));
+    if (!reponse.ok) throw new Error(donnees.erreur || `http_${reponse.status}`);
+    await chargerEtat();                  // on recharge pour voir le résultat
+    rafraichir();
+    message.style.color = "";
+    // Si le lycée n'est pas (encore) dans la liste, on explique pourquoi
+    const dansLaListe = perturbes.some((p) => p.uai === uai);
+    if (motifParId(motifId)?.perturbe && !dansLaListe) {
+      message.textContent = "Merci, ton signalement est pris en compte. Le lycée apparaîtra " +
+        "dans la liste dès qu'il aura été confirmé par d'autres élèves.";
+    } else {
+      message.textContent = "Signalement enregistré. Merci !";
+    }
+  } catch (e) {
+    console.error(e);
+    const code = Object.keys(MESSAGES_ERREUR).find((c) => String(e.message).includes(c));
+    message.style.color = "var(--alerte)";
+    message.textContent = code ? MESSAGES_ERREUR[code] : "L'envoi a échoué. Réessaie dans un instant.";
+  } finally {
+    bouton.disabled = false;
+    reinitialiserCaptcha();               // nouveau jeton pour le prochain envoi
+  }
+});
+
+/* ===================================================================
+   BLOC JS 9 : DÉMARRAGE
+   rafraichir() redessine tout. Toutes les 30 secondes, on recharge
+   les signalements pour voir ceux des autres visiteurs.
+   =================================================================== */
+function rafraichir() {
+  afficherListe();
+  afficherHistogramme();
+}
+
+async function demarrer() {
+  try {
+    // On charge les trois sources en parallèle (plus rapide)
+    await Promise.all([chargerLycees(), chargerMotifs(), chargerEtat()]);
+    remplirMotifs();
+    rafraichir();
+  } catch (e) {
+    console.error(e);
+    document.getElementById("liste").textContent =
+      "Impossible de joindre la base de données. Réessaie plus tard.";
+  }
+  // Toutes les 30 s : on recharge l'état calculé par le serveur
+  setInterval(async () => {
+    try { await chargerEtat(); rafraichir(); } catch (e) { /* on réessaiera */ }
+  }, 30000);
+}
+demarrer();
+</script>
+</body>
+</html>
