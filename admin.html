@@ -53,6 +53,20 @@ th, td { text-align: left; padding: .35rem .4rem; border-bottom: 1px solid var(-
 tr.annule td { color: var(--discret); text-decoration: line-through; }
 tr.annule td:last-child { text-decoration: none; }
 code { font-size: .82rem; }
+
+/* BLOC CSS 4 : le champ mot de passe avec son bouton "œil".
+   Le conteneur est en position: relative pour que le bouton (absolute)
+   se place par-dessus la partie droite du champ. */
+.champ-mdp { position: relative; }
+.champ-mdp input { padding-right: 2.9rem; }          /* le texte ne passe pas sous l'œil */
+.champ-mdp .oeil {
+  position: absolute; top: 50%; right: .3rem; transform: translateY(-50%);
+  width: 2.2rem; height: 2.2rem; margin: 0; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: none; color: var(--discret); border: 0; border-radius: 6px;
+}
+.champ-mdp .oeil:hover { color: var(--encre); }
+.champ-mdp .oeil:focus-visible { outline: 3px solid #93b4ff; }
 </style>
 </head>
 
@@ -67,7 +81,27 @@ code { font-size: .82rem; }
     <label for="email">Email</label>
     <input id="email" type="email" autocomplete="username">
     <label for="mdp">Mot de passe</label>
-    <input id="mdp" type="password" autocomplete="current-password">
+    <div class="champ-mdp">
+      <input id="mdp" type="password" autocomplete="current-password">
+      <!-- type="button" : évite qu'il agisse comme un bouton d'envoi.
+           aria-label / aria-pressed : indications pour les lecteurs d'écran. -->
+      <button id="btn-oeil" class="oeil" type="button"
+              aria-label="Afficher le mot de passe" aria-pressed="false">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <!-- œil ouvert : affiché quand le mot de passe est masqué -->
+          <g id="oeil-ouvert">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+            <circle cx="12" cy="12" r="3"/>
+          </g>
+          <!-- œil barré : affiché quand le mot de passe est visible -->
+          <g id="oeil-barre" style="display:none">
+            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+            <line x1="1" y1="1" x2="23" y2="23"/>
+          </g>
+        </svg>
+      </button>
+    </div>
     <div style="margin-top:1rem"><button id="btn-connexion" type="button">Se connecter</button></div>
   </section>
 
@@ -147,6 +181,7 @@ function deconnecter(message = "") {
   $("tableau").hidden = true;
   $("connexion").hidden = false;
   $("mdp").value = "";
+  afficherMdp(false);       // le prochain affichage commence masqué
   erreur(message);
 }
 
@@ -364,6 +399,8 @@ $("btn-connexion").onclick = async () => {
   erreur();
   try {
     await connecter($("email").value.trim(), $("mdp").value);
+    $("mdp").value = "";
+    afficherMdp(false);
     await ouvrirTableau();
   } catch (e) {
     if (e.message !== "401") erreur(e.message.startsWith("Email") ? e.message : "Erreur de connexion.");
@@ -372,6 +409,17 @@ $("btn-connexion").onclick = async () => {
     bouton.disabled = false;
   }
 };
+// Affiche ou masque le mot de passe : on change le "type" du champ.
+// type="password" -> points ; type="text" -> texte lisible.
+function afficherMdp(visible) {
+  $("mdp").type = visible ? "text" : "password";
+  $("oeil-ouvert").style.display = visible ? "none" : "";
+  $("oeil-barre").style.display = visible ? "" : "none";
+  $("btn-oeil").setAttribute("aria-pressed", String(visible));
+  $("btn-oeil").setAttribute("aria-label", visible ? "Masquer le mot de passe" : "Afficher le mot de passe");
+}
+$("btn-oeil").onclick = () => afficherMdp($("mdp").type === "password");
+
 $("mdp").addEventListener("keydown", (e) => { if (e.key === "Enter") $("btn-connexion").click(); });
 
 $("btn-actualiser").onclick = () => afficher().catch((e) => { erreur("Actualisation impossible."); console.error(e); });
