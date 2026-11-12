@@ -414,7 +414,7 @@ let jetonCaptcha = null;      // jeton valide, ou null s'il manque / a expiré
 function afficherCaptcha() {
   if (!window.turnstile || widgetCaptcha !== null) return;
   widgetCaptcha = turnstile.render("#captcha", {
-    sitekey: TURNSTILE_CLE_SITE,
+    sitekey: 0x4AAAAAAF75nUOZOzPumPUl,
     callback: (jeton) => { jetonCaptcha = jeton; },
     "expired-callback": () => { jetonCaptcha = null; },
     "error-callback": () => { jetonCaptcha = null; },
